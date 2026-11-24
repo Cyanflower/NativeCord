@@ -1,0 +1,141 @@
+name: Discord Notify
+
+# 通知分工（与 Lunarium.Common 一致）：
+# - push / PR / issue：由 Discord 原生 GitHub webhook 发送
+#   （频道 → 编辑频道 → 集成 → Webhooks → GitHub，授权后选择仓库与事件）
+# - Release 与 CI/CD 结果：由本工作流发送
+#
+# Webhook URL 存放在 Settings → Secrets and variables → Actions → DISCORD_WEBHOOK_URL
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  workflow_run:
+    # 名称必须与 ci.yml / cd.yml 的 name 完全一致；新增 cd.yml 后把 CD 加到这里
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  discord:
+    name: Send Discord notification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    # fork PR 触发的 workflow_run 也在基础仓库上下文中运行且能拿到 secrets，
+    # 这里排除它们，避免不可信内容触发仓库级通知
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_repository.full_name || github.repository) == github.repository
+
+    steps:
+      - name: Send
+        shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "DISCORD_WEBHOOK_URL 未配置，跳过通知"
+            echo "请在 Settings → Secrets and variables → Actions 中创建该 Secret"
+            exit 0
+          fi
+
+          event="$GITHUB_EVENT_PATH"
+
+          case "$EVENT_NAME" in
+            release)
+              payload=$(jq '{
+                username: "NativeCord CI",
+                allowed_mentions: { parse: [] },
+                embeds: [{
+                  title: (
+                    ("Release " + .release.tag_name
+                     + (if .release.prerelease then " (pre-release)" else "" end))[0:250]
+                  ),
+                  url: .release.html_url,
+                  description: (
+                    (.release.body // "") as $body
+                    | if $body == "" then "（无 Release 说明）" else $body[0:3900] end
+                  ),
+                  color: (if .release.prerelease then 16776960 else 5763719 end),
+                  author: {
+                    name: .release.author.login,
+                    icon_url: .release.author.avatar_url
+                  },
+                  fields: [
+                    { name: "标签", value: .release.tag_name, inline: true }
+                  ],
+                  timestamp: (.release.published_at // .release.created_at)
+                }]
+              }' "$event")
+              ;;
+
+            workflow_dispatch)
+              payload=$(jq -n \
+                --arg repo "$GITHUB_REPOSITORY" \
+                --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+                '{
+                  username: "NativeCord CI",
+                  content: ("Discord 通知连通性测试 — " + $repo + "\n" + $run)
+                }')
+              ;;
+
+            workflow_run)
+              payload=$(jq '
+                (.workflow_run.head_branch // "") as $ref
+                | (if .workflow_run.conclusion == "success" then "成功"
+                   elif .workflow_run.conclusion == "failure" then "失败"
+                   elif .workflow_run.conclusion == "cancelled" then "已取消"
+                   elif .workflow_run.conclusion == "skipped" then "已跳过"
+                   elif .workflow_run.conclusion == "timed_out" then "超时"
+                   elif .workflow_run.conclusion == "action_required" then "需要处理"
+                   else .workflow_run.conclusion end) as $status
+                | (if .workflow_run.conclusion == "success" then 5763719
+                   elif .workflow_run.conclusion == "failure" then 15158332
+                   elif .workflow_run.conclusion == "cancelled" then 15105570
+                   else 9807270 end) as $color
+                | {
+                    username: "NativeCord CI",
+                    allowed_mentions: { parse: [] },
+                    embeds: [{
+                      title: (
+                        (.workflow_run.name + " " + $status
+                         + (if $ref != "" then " — " + $ref else "" end))[0:250]
+                      ),
+                      url: .workflow_run.html_url,
+                      color: $color,
+                      author: {
+                        name: (.workflow_run.actor.login // "GitHub Actions"),
+                        icon_url: .workflow_run.actor.avatar_url
+                      },
+                      description: (
+                        ((.workflow_run.head_commit.message // "") | split("\n")[0]) as $msg
+                        | if $msg == "" then "（无提交信息）" else $msg[0:3900] end
+                      ),
+                      fields: [
+                        { name: "工作流", value: .workflow_run.name, inline: true },
+                        { name: "事件", value: .workflow_run.event, inline: true },
+                        { name: "分支/标签", value: (if $ref == "" then "—" else $ref end), inline: true }
+                      ],
+                      timestamp: (.workflow_run.updated_at // .workflow_run.run_started_at)
+                    }]
+                  }' "$event")
+              ;;
+
+            *)
+              echo "未处理的事件: $EVENT_NAME，跳过通知"
+              exit 0
+              ;;
+          esac
+
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-delay 2 --max-time 20 \
+            -X POST "${DISCORD_WEBHOOK_URL}?wait=true" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: NativeCord-CI" \
+            --data-binary "$payload"

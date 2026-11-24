@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '*.slnx'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+      - '.editorconfig'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - '*.slnx'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
+      - '.editorconfig'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+
+# 同一 PR 连续推送时取消旧运行；main 上的运行不取消，避免通知被大量 "已取消" 刷屏
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build & Pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '11.0.x'
+
+      - name: Restore
+        run: dotnet restore NativeCord.slnx
+
+      # 库自带 IsAotCompatible，构建时 IL2026/IL3050 等分析器即为开启状态，
+      # 因此这一步同时充当 AOT/裁剪兼容性的回归防线。
+      - name: Build
+        run: dotnet build NativeCord.slnx --configuration Release --no-restore
+
+      # 暂无测试项目；新增 tests/ 后在此补 dotnet test --configuration Release --no-build
+
+      # 把打包也纳入 CI：否则包元数据要到发版时才第一次被验证
+      - name: Pack (verify packaging)
+        run: dotnet pack src/NativeCord/NativeCord.csproj --configuration Release --no-build --output ./nupkgs
