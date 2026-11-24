@@ -1,6 +1,6 @@
 namespace NativeCord;
 
-public readonly record struct DiscordUrl(string Value)
+public readonly record struct DiscordUrl(string Value, string? Resource = null)
 {
     public override string ToString() => Value;
 

@@ -1,3 +1,0 @@
-
-namespace NativeCord.Core.Urls;
-

@@ -1,8 +1,14 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 
 namespace NativeCord;
 
-public readonly record struct Snowflake(ulong Value) : IComparable<Snowflake>, ISpanFormattable, IUtf8SpanFormattable
+public readonly record struct Snowflake(ulong Value)
+    : IComparable<Snowflake>,
+      ISpanFormattable,
+      IUtf8SpanFormattable,
+      ISpanParsable<Snowflake>,
+      IUtf8SpanParsable<Snowflake>
 {
     public override string ToString() => Value.ToString(CultureInfo.InvariantCulture);
 
@@ -15,7 +21,66 @@ public readonly record struct Snowflake(ulong Value) : IComparable<Snowflake>, I
     public bool TryFormat(Span<byte> utf8Destination, out int bytesWritten, ReadOnlySpan<char> format, IFormatProvider? provider)
         => Value.TryFormat(utf8Destination, out bytesWritten, format, provider ?? CultureInfo.InvariantCulture);
 
-    public static implicit operator string(Snowflake snowflake) => snowflake.Value.ToString(CultureInfo.InvariantCulture);
+    public static Snowflake Parse(string s, IFormatProvider? provider)
+        => new(ulong.Parse(s, provider ?? CultureInfo.InvariantCulture));
+
+    public static bool TryParse([NotNullWhen(true)] string? s, IFormatProvider? provider, out Snowflake result)
+    {
+        if (ulong.TryParse(s, provider ?? CultureInfo.InvariantCulture, out var value))
+        {
+            result = new Snowflake(value);
+            return true;
+        }
+
+        result = default;
+        return false;
+    }
+
+    public static Snowflake Parse(ReadOnlySpan<char> s, IFormatProvider? provider)
+        => new(ulong.Parse(s, provider ?? CultureInfo.InvariantCulture));
+
+    public static bool TryParse(ReadOnlySpan<char> s, IFormatProvider? provider, out Snowflake result)
+    {
+        if (ulong.TryParse(s, provider ?? CultureInfo.InvariantCulture, out var value))
+        {
+            result = new Snowflake(value);
+            return true;
+        }
+
+        result = default;
+        return false;
+    }
+
+    public static Snowflake Parse(ReadOnlySpan<byte> utf8Text, IFormatProvider? provider)
+        => new(ulong.Parse(utf8Text, provider ?? CultureInfo.InvariantCulture));
+
+    public static bool TryParse(ReadOnlySpan<byte> utf8Text, IFormatProvider? provider, out Snowflake result)
+    {
+        if (ulong.TryParse(utf8Text, provider ?? CultureInfo.InvariantCulture, out var value))
+        {
+            result = new Snowflake(value);
+            return true;
+        }
+
+        result = default;
+        return false;
+    }
+
+    public static Snowflake FromTimestamp(DateTimeOffset timestamp)
+    => FromUnixTimeMilliseconds(timestamp.ToUnixTimeMilliseconds());
+
+    public static Snowflake FromUnixTimeMilliseconds(long unixTimeMilliseconds)
+    {
+        const long minTimestamp = (long)DiscordEpoch.Timestamp;
+
+        const long maxTimestamp = (long)(DiscordEpoch.Timestamp + (ulong.MaxValue >> DiscordEpoch.TimestampShift));
+
+        ArgumentOutOfRangeException.ThrowIfLessThan(unixTimeMilliseconds, minTimestamp);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(unixTimeMilliseconds, maxTimestamp);
+
+        ulong elapsedMilliseconds = (ulong)(unixTimeMilliseconds - minTimestamp);
+        return new Snowflake(elapsedMilliseconds << DiscordEpoch.TimestampShift);
+    }
 
     public static implicit operator ulong(Snowflake snowflake) => snowflake.Value;
 

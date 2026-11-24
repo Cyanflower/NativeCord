@@ -5,7 +5,7 @@ public static class DiscordEpoch
     /// <summary>
     /// Discord Epoch: 2015-01-01T00:00:00.000Z, Value is ulong Ms Timestamp
     /// </summary>
-    public const ulong Timestamp = 1420070400000UL; // 建议用 ulong，因为 Snowflake 本身是 ulong
+    public const ulong Timestamp = 1420070400000UL;
 
     // Snowflake 64位拆解的位移与掩码常量
     public const int TimestampShift = 22;

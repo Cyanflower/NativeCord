@@ -2,7 +2,7 @@ namespace NativeCord;
 
 public readonly record struct ImageHash(string Value) : ISpanFormattable
 {
-    public bool IsAnimated => Value.AsSpan().StartsWith(MagicString.AnimatedPrefix);
+    public bool IsAnimated => Value.AsSpan().StartsWith(MagicString.Cdn.AnimatedPrefix);
     
     public override string ToString() => Value;
 

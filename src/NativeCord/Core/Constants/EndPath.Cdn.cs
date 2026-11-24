@@ -2,7 +2,7 @@
 
 namespace NativeCord;
 
-public static partial class Endpoints
+public static partial class EndPath
 {
     public static class Cdn
     {
