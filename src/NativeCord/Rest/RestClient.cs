@@ -25,12 +25,15 @@ public sealed class RestClient : IDisposable
     /// </summary>
     /// <param name="defaultToken">Default authorization token attached to routes with <see cref="RestRoute.UseAuth"/> enabled.</param>
     /// <param name="baseUrl">Optional custom base URL and API version settings.</param>
-    /// <param name="rateLimiter">Optional rate limiter; defaults to <see cref="NullRateLimiter.Instance"/>.</param>
+    /// <param name="rateLimiter">
+    /// Optional rate limiter; defaults to a dedicated <see cref="DiscordRateLimiter"/> owned by this client.
+    /// Pass <see cref="NullRateLimiter.Instance"/> to disable client-side rate limiting.
+    /// </param>
     /// <param name="handler">Optional custom <see cref="HttpMessageHandler"/> (for proxies or unit testing).</param>
     /// <param name="disposeHandler">Whether disposing this client also disposes a caller-supplied <paramref name="handler"/>.</param>
     /// <param name="disposeRateLimiter">Whether disposing this client also disposes a caller-supplied <paramref name="rateLimiter"/>.</param>
     /// <param name="maxRateLimitRetries">Maximum number of automatic retries on HTTP 429 responses.</param>
-    /// <param name="timeProvider">Optional time provider controlling 429 retry delays; defaults to <see cref="TimeProvider.System"/>.</param>
+    /// <param name="timeProvider">Optional time provider controlling retry delays and the default rate limiter; defaults to <see cref="TimeProvider.System"/>.</param>
     public RestClient(
         BotToken? defaultToken = null,
         BaseUrl? baseUrl = null,
@@ -44,11 +47,11 @@ public sealed class RestClient : IDisposable
         ArgumentOutOfRangeException.ThrowIfNegative(maxRateLimitRetries);
 
         _defaultAuthHeader = defaultToken is { } token ? token.ToAuthorizationHeader() : null;
-        _rateLimiter = rateLimiter ?? NullRateLimiter.Instance;
-        // 注入 TimeProvider 使 429 退避等待在单元测试中完全可确定、无需真实睡眠
+        // 注入 TimeProvider 使 429 退避等待与默认限流器在单元测试中完全可确定、无需真实睡眠
         _timeProvider = timeProvider ?? TimeProvider.System;
-        // 仅当调用方显式传入自定义限流器且要求托管释放时才在 Dispose 中释放，不释放共享的 NullRateLimiter.Instance
-        _disposeRateLimiter = rateLimiter is not null && disposeRateLimiter;
+        // 默认开箱启用 DiscordRateLimiter 并由本实例托管释放；如需禁用可显式传入 NullRateLimiter.Instance
+        _rateLimiter = rateLimiter ?? new DiscordRateLimiter(timeProvider: _timeProvider);
+        _disposeRateLimiter = rateLimiter is null || disposeRateLimiter;
         _maxRateLimitRetries = maxRateLimitRetries;
 
         // 若由内部创建 SocketsHttpHandler，则强制由内部负责释放，防止句柄泄漏

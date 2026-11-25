@@ -112,6 +112,7 @@ public sealed class RestClientTests
 
         using RestClient client = new(
             defaultToken: new BotToken("tok"),
+            rateLimiter: NullRateLimiter.Instance,
             handler: handler,
             timeProvider: clock);
 
@@ -172,7 +173,7 @@ public sealed class RestClientTests
             return form;
         }, canRetry: true);
 
-        using RestClient client = new(handler: handler, timeProvider: clock);
+        using RestClient client = new(rateLimiter: NullRateLimiter.Instance, handler: handler, timeProvider: clock);
         TestUser? user = await client.SendAsync<TestUser>(new RestRequest
         {
             Route = s_createMessageRoute,
@@ -306,7 +307,7 @@ public sealed class RestClientTests
         handler.Enqueue(rateLimited);
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.NoContent));
 
-        using RestClient client = new(handler: handler, timeProvider: clock);
+        using RestClient client = new(rateLimiter: NullRateLimiter.Instance, handler: handler, timeProvider: clock);
         await client.SendAsync(new RestRequest { Route = s_currentUserRoute });
 
         Assert.Equal(TimeSpan.FromSeconds(1337), Assert.Single(clock.RecordedDelays));
@@ -329,7 +330,7 @@ public sealed class RestClientTests
         handler.Enqueue(rateLimited);
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.NoContent));
 
-        using RestClient client = new(handler: handler, timeProvider: clock);
+        using RestClient client = new(rateLimiter: NullRateLimiter.Instance, handler: handler, timeProvider: clock);
         await client.SendAsync(new RestRequest { Route = s_currentUserRoute });
 
         Assert.Equal(TimeSpan.FromSeconds(4.25), Assert.Single(clock.RecordedDelays));
@@ -350,7 +351,7 @@ public sealed class RestClientTests
         handler.Enqueue(cf429);
         handler.Enqueue(new HttpResponseMessage(HttpStatusCode.NoContent));
 
-        using RestClient client = new(handler: handler, timeProvider: clock);
+        using RestClient client = new(rateLimiter: NullRateLimiter.Instance, handler: handler, timeProvider: clock);
         await client.SendAsync(new RestRequest { Route = s_currentUserRoute });
 
         Assert.Equal(2, handler.CallCount);
@@ -366,7 +367,7 @@ public sealed class RestClientTests
         for (int i = 0; i < 3; i++)
             handler.EnqueueJson(HttpStatusCode.TooManyRequests, """{"message":"Slow down","retry_after":0.5,"global":false}""");
 
-        using RestClient client = new(handler: handler, maxRateLimitRetries: 2, timeProvider: clock);
+        using RestClient client = new(rateLimiter: NullRateLimiter.Instance, handler: handler, maxRateLimitRetries: 2, timeProvider: clock);
         DiscordRestException ex = await Assert.ThrowsAsync<DiscordRestException>(async () =>
             await client.SendAsync(new RestRequest { Route = s_currentUserRoute }));
 
@@ -429,5 +430,37 @@ public sealed class RestClientTests
         Assert.True(ownedLimiter.IsDisposed);
         await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
             await client.SendAsync(new RestRequest { Route = s_currentUserRoute }));
+    }
+
+    [Fact]
+    public async Task DefaultRateLimiter_EnforcesBucketResetOutOfTheBox()
+    {
+        FakeTimeProvider clock = new(autoCompleteDelays: false);
+        MockHttpMessageHandler handler = new();
+
+        handler.EnqueueJson(HttpStatusCode.OK, """{"id":"1","username":"first"}""", res =>
+        {
+            res.Headers.TryAddWithoutValidation("X-RateLimit-Bucket", "default-bucket");
+            res.Headers.TryAddWithoutValidation("X-RateLimit-Limit", "1");
+            res.Headers.TryAddWithoutValidation("X-RateLimit-Remaining", "0");
+            res.Headers.TryAddWithoutValidation("X-RateLimit-Reset-After", "1.0");
+        });
+        handler.EnqueueJson(HttpStatusCode.OK, """{"id":"2","username":"second"}""");
+
+        // 不显式传入 rateLimiter，验证默认内置的 DiscordRateLimiter 开箱生效
+        using RestClient client = new(defaultToken: new BotToken("tok"), handler: handler, timeProvider: clock);
+
+        TestUser? first = await client.SendAsync<TestUser>(new RestRequest { Route = s_createMessageRoute });
+        Assert.Equal("first", first?.Username);
+
+        Task<TestUser?> secondTask = client.SendAsync<TestUser>(new RestRequest { Route = s_createMessageRoute }).AsTask();
+        Assert.False(secondTask.IsCompleted);
+        Assert.Equal(1, handler.CallCount);
+
+        // 1.0s 重置时间 + 默认 50ms BucketResetBuffer
+        clock.Advance(TimeSpan.FromMilliseconds(1050));
+        TestUser? second = await secondTask.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal("second", second?.Username);
+        Assert.Equal(2, handler.CallCount);
     }
 }

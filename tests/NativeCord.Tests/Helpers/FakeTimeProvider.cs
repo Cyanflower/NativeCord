@@ -49,7 +49,7 @@ internal sealed class FakeTimeProvider : TimeProvider
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(delta, TimeSpan.Zero);
 
-        List<(TimerCallback Callback, object? State)> ready = [];
+        List<ManualTimer> ready = [];
         lock (_sync)
         {
             _utcNow += delta;
@@ -60,14 +60,19 @@ internal sealed class FakeTimeProvider : TimeProvider
                 ManualTimer timer = _timers[i];
                 if (!timer.IsDisposed && timer.DueAtTicks <= nowTicks)
                 {
-                    ready.Add((timer.Callback, timer.State));
+                    ready.Add(timer);
                     _timers.RemoveAt(i);
                 }
             }
         }
 
-        foreach ((TimerCallback callback, object? state) in ready)
-            callback(state);
+        // 按到期时间升序触发，保持严格时序确定性
+        ready.Sort(static (a, b) => a.DueAtTicks.CompareTo(b.DueAtTicks));
+        foreach (ManualTimer timer in ready)
+        {
+            if (!timer.IsDisposed)
+                timer.Callback(timer.State);
+        }
     }
 
     public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
@@ -85,6 +90,11 @@ internal sealed class FakeTimeProvider : TimeProvider
             {
                 // 自动快进虚拟时间并在线程池异步触发回调，确保 Task.Delay 在 CreateTimer 返回后立刻完成且不阻塞
                 _utcNow += dueTime;
+                fireImmediately = true;
+                timer = new ManualTimer(this, callback, state, _utcNow.UtcTicks);
+            }
+            else if (dueTime <= TimeSpan.Zero)
+            {
                 fireImmediately = true;
                 timer = new ManualTimer(this, callback, state, _utcNow.UtcTicks);
             }
