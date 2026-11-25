@@ -36,6 +36,24 @@
   - `FromTimestamp_RoundTripsAndValidatesDiscordEpochBounds`：验证 `FromTimestamp` 与 `UnixTimeMilliseconds`/`Timestamp` 毫秒级往返一致，以及早于 Discord Epoch（2015-01-01）时抛 `ArgumentOutOfRangeException`。
   - `ComparisonOperators_OrderByUnderlyingValue`：验证 `<`、`<=`、`>`、`>=` 与 `CompareTo` 按底层 `ulong` 排序。
 
+### OptionalTests.cs（3 个测试）
+- **目标类**: `Optional<T>`、`Optional`
+- **主要测试场景**:
+  - `DefaultAndNone_AreUnspecifiedAndThrowOnValueAccess`：验证 `default` 与 `Optional<T>.None` 的 `HasValue == false`、`TryGetValue`/`GetValueOrDefault`、`ToString()` 以及访问 `Value` 抛 `InvalidOperationException`。
+  - `ImplicitConversionAndFactory_WrapValuesIncludingExplicitNull`：验证隐式转换（含显式 `null` 赋给 `Optional<string?>` 与 `Optional<Snowflake?>`）及 `Optional.From(0)` 均正确置 `HasValue == true`。
+  - `Equality_DistinguishesUnspecifiedFromExplicitNullAndDefaultValues`：验证 `default(Optional<T>)` 与显式 `null`/`0`/`false` 严格判为不相等（确保 `JsonIgnoreCondition.WhenWritingDefault` 正确生效），并校验相等值与 `GetHashCode` 一致性。
+
+### SerializationTests.cs（7 个方法 / 10 个用例）
+- **目标类**: `SnowflakeJsonConverter`、`ImageHashJsonConverter`、`OptionalJsonConverter<T>`
+- **主要测试场景**:
+  - `Snowflake_SerializesAsStringAndDeserializesFromStringNumberEscapedAndSegmented`：验证 `Snowflake` 序列化为 JSON 字符串、字典键往返（`ReadAsPropertyName`/`WriteAsPropertyName`）、兼容数值与 Unicode 转义字符串，以及跨 `ReadOnlySequence<byte>` 分段读取。
+  - `Snowflake_InvalidJsonTokens_ThrowJsonException`（4 组 Theory）：非数字字符串、负数、布尔值、超长溢出数字均抛 `JsonException`。
+  - `ImageHash_RoundTripsValueAndNullableNullAndRejectsNonString`：验证 `ImageHash` 与 `ImageHash?` 往返及动图标识，非字符串令牌抛 `JsonException`。
+  - `Optional_PatchSerialization_OmitsUnspecifiedAndWritesExplicitNullAndDefaultScalars`：验证 PATCH 序列化时未设置字段被省略，而显式 `null`（`string?`/`Snowflake?`）、`0`、`false`、`ImageHash` 及嵌套 DTO 均正确写出。
+  - `Optional_Deserialization_DistinguishesOmittedFromExplicitNullAndValues`：验证反序列化准确区分省略字段（`HasValue == false`）、显式 `null`（`HasValue == true, Value == null`）与具体值。
+  - `Optional_NonNullableValueTypeWithJsonNull_ThrowsJsonException`：非可空值类型（`Optional<int>`）遇到 JSON `null` 时抛 `JsonException`。
+  - `Optional_WithoutWhenWritingDefault_ThrowsOnUnspecifiedWrite`：未标注 `WhenWritingDefault` 而直接序列化未设置 `Optional<T>` 时抛 `InvalidOperationException` 防呆。
+
 ---
 
 ## Rest/（HTTP 管道与限流）

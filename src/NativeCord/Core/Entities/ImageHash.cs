@@ -1,5 +1,8 @@
+using NativeCord.Serialization;
+
 namespace NativeCord;
 
+[JsonConverter(typeof(ImageHashJsonConverter))]
 public readonly record struct ImageHash(string Value) : ISpanFormattable
 {
     public bool IsAnimated => Value.AsSpan().StartsWith(MagicString.Cdn.AnimatedPrefix);

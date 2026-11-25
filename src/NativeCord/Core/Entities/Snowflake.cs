@@ -1,8 +1,11 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 
+using NativeCord.Serialization;
+
 namespace NativeCord;
 
+[JsonConverter(typeof(SnowflakeJsonConverter))]
 public readonly record struct Snowflake(ulong Value)
     : IComparable<Snowflake>,
       ISpanFormattable,
