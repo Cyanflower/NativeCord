@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'tests/**'
       - '*.slnx'
       - 'Directory.Build.props'
       - 'Directory.Packages.props'
@@ -15,6 +16,7 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'tests/**'
       - '*.slnx'
       - 'Directory.Build.props'
       - 'Directory.Packages.props'
@@ -52,7 +54,8 @@ jobs:
       - name: Build
         run: dotnet build NativeCord.slnx --configuration Release --no-restore
 
-      # 暂无测试项目；新增 tests/ 后在此补 dotnet test --configuration Release --no-build
+      - name: Test
+        run: dotnet test NativeCord.slnx --configuration Release --no-build --verbosity normal
 
       # 把打包也纳入 CI：否则包元数据要到发版时才第一次被验证
       - name: Pack (verify packaging)

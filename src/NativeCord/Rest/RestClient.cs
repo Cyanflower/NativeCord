@@ -13,6 +13,7 @@ public sealed class RestClient : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly IRateLimiter _rateLimiter;
+    private readonly TimeProvider _timeProvider;
     private readonly bool _disposeRateLimiter;
     // 预先拼好默认 Authorization 头（如 "Bot xxx"），按请求动态挂载，避免绑死在 HttpClient.DefaultRequestHeaders 上
     private readonly string? _defaultAuthHeader;
@@ -29,6 +30,7 @@ public sealed class RestClient : IDisposable
     /// <param name="disposeHandler">Whether disposing this client also disposes a caller-supplied <paramref name="handler"/>.</param>
     /// <param name="disposeRateLimiter">Whether disposing this client also disposes a caller-supplied <paramref name="rateLimiter"/>.</param>
     /// <param name="maxRateLimitRetries">Maximum number of automatic retries on HTTP 429 responses.</param>
+    /// <param name="timeProvider">Optional time provider controlling 429 retry delays; defaults to <see cref="TimeProvider.System"/>.</param>
     public RestClient(
         BotToken? defaultToken = null,
         BaseUrl? baseUrl = null,
@@ -36,12 +38,15 @@ public sealed class RestClient : IDisposable
         HttpMessageHandler? handler = null,
         bool disposeHandler = true,
         bool disposeRateLimiter = false,
-        int maxRateLimitRetries = 5)
+        int maxRateLimitRetries = 5,
+        TimeProvider? timeProvider = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maxRateLimitRetries);
 
         _defaultAuthHeader = defaultToken is { } token ? token.ToAuthorizationHeader() : null;
         _rateLimiter = rateLimiter ?? NullRateLimiter.Instance;
+        // 注入 TimeProvider 使 429 退避等待在单元测试中完全可确定、无需真实睡眠
+        _timeProvider = timeProvider ?? TimeProvider.System;
         // 仅当调用方显式传入自定义限流器且要求托管释放时才在 Dispose 中释放，不释放共享的 NullRateLimiter.Instance
         _disposeRateLimiter = rateLimiter is not null && disposeRateLimiter;
         _maxRateLimitRetries = maxRateLimitRetries;
@@ -192,7 +197,7 @@ public sealed class RestClient : IDisposable
             }
 
             if (retryDelay > TimeSpan.Zero)
-                await Task.Delay(retryDelay, ct).ConfigureAwait(false);
+                await Task.Delay(retryDelay, _timeProvider, ct).ConfigureAwait(false);
         }
     }
 
@@ -246,7 +251,11 @@ public sealed class RestClient : IDisposable
             seconds = info.ResetAfterSeconds ?? info.RetryAfterSeconds ?? 1.0;
         }
 
-        return seconds <= 0 ? TimeSpan.Zero : TimeSpan.FromSeconds(seconds);
+        if (seconds <= 0)
+            return TimeSpan.Zero;
+
+        // 向上取整到整毫秒：避免 double 转 TimeSpan 再被 Task.Delay 按毫秒截断，导致提前 1ms 发出重试又触发 429
+        return TimeSpan.FromMilliseconds(Math.Ceiling(seconds * 1000.0));
     }
 
     private static SocketsHttpHandler CreateSocketsHttpHandler()
